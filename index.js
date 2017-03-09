@@ -1,87 +1,52 @@
 /* global MutationObserver */
-var document = require('global/document')
-var window = require('global/window')
-var watch = Object.create(null)
-var KEY_ID = 'onloadid' + (new Date() % 9e6).toString(36)
-var KEY_ATTR = 'data-' + KEY_ID
-var INDEX = 0
+const document = require('global/document')
+const window = require('global/window')
+
+const onLoads = new WeakMap()
+const onUnloads = new WeakMap()
 
 if (window && window.MutationObserver) {
-  var observer = new MutationObserver(function (mutations) {
-    if (Object.keys(watch).length < 1) return
+  const observer = new MutationObserver(function (mutations) {
     for (var i = 0; i < mutations.length; i++) {
-      if (mutations[i].attributeName === KEY_ATTR) {
-        eachAttr(mutations[i], turnon, turnoff)
-        continue
-      }
-      eachMutation(mutations[i].removedNodes, turnoff)
-      eachMutation(mutations[i].addedNodes, turnon)
+      const mutation = mutations[i]
+      eachMutation(mutation.removedNodes, onUnloads)
+      eachMutation(mutation.addedNodes, onLoads)
     }
   })
   observer.observe(document.body, {
     childList: true,
-    subtree: true,
-    attributes: true,
-    attributeOldValue: true,
-    attributeFilter: [KEY_ATTR]
+    subtree: true
   })
 }
 
-module.exports = function onload (el, on, off, caller) {
-  on = on || function () {}
-  off = off || function () {}
-  el.setAttribute(KEY_ATTR, 'o' + INDEX)
-  watch['o' + INDEX] = [on, off, 0, caller || onload.caller]
-  INDEX += 1
-  return el
+module.exports = function onload (element, onLoad, onUnload) {
+  if (onLoad) getOrSetDefault(onLoads, element).push(onLoad)
+  if (onUnload) getOrSetDefault(onUnloads, element).push(onUnload)
+  return element
 }
 
-function turnon (index, el) {
-  if (watch[index][0] && watch[index][2] === 0) {
-    watch[index][0](el)
-    watch[index][2] = 1
+function getOrSetDefault (weakmap, element) {
+  var sofar = weakmap.get(element)
+  if (sofar === undefined) {
+    weakmap.set(element, sofar = [])
   }
+  return sofar
 }
 
-function turnoff (index, el) {
-  if (watch[index][1] && watch[index][2] === 1) {
-    watch[index][1](el)
-    watch[index][2] = 0
-  }
-}
-
-function eachAttr (mutation, on, off) {
-  var newValue = mutation.target.getAttribute(KEY_ATTR)
-  if (sameOrigin(mutation.oldValue, newValue)) {
-    watch[newValue] = watch[mutation.oldValue]
-    return
-  }
-  if (watch[mutation.oldValue]) {
-    off(mutation.oldValue, mutation.target)
-  }
-  if (watch[newValue]) {
-    on(newValue, mutation.target)
-  }
-}
-
-function sameOrigin (oldValue, newValue) {
-  if (!oldValue || !newValue) return false
-  return watch[oldValue][3] === watch[newValue][3]
-}
-
-function eachMutation (nodes, fn) {
-  var keys = Object.keys(watch)
+function eachMutation (nodes, weakmap) {
   for (var i = 0; i < nodes.length; i++) {
-    if (nodes[i] && nodes[i].getAttribute && nodes[i].getAttribute(KEY_ATTR)) {
-      var onloadid = nodes[i].getAttribute(KEY_ATTR)
-      keys.forEach(function (k) {
-        if (onloadid === k) {
-          fn(k, nodes[i])
-        }
-      })
-    }
-    if (nodes[i].childNodes.length > 0) {
-      eachMutation(nodes[i].childNodes, fn)
+    const node = nodes[i]
+    runListeners(weakmap, node)
+    if (node.childNodes.length > 0) {
+      eachMutation(node.childNodes, weakmap)
     }
   }
+}
+
+function runListeners (weakmap, node) {
+  if (!weakmap.has(node)) return
+  const handlers = weakmap.get(node)
+  console.log('handlers', handlers)
+  // weakmap.delete(node)
+  handlers.forEach(handler => handler(node))
 }
